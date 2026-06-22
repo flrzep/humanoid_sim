@@ -1,0 +1,75 @@
+# IMU error presets for IMU_Sim.
+#
+# Units: accelerometer in m/s^2, gyroscope in rad/s.
+#   noise_density : per-sqrt-Hz spectral density (VRW for accel, ARW for gyro)
+#   bias0         : constant turn-on bias
+#   tempco_bias   : bias change per deg C
+#   tempco_scale  : scale-factor change per deg C (fraction/deg)
+#   bias_rw       : bias-instability random-walk rate (units/sqrt(s))
+#   g_sensitivity : gyro coupling to specific force (rad/s per m/s^2)
+#   bandwidth_hz  : first-order low-pass cutoff
+#   quant_lsb     : ADC quantization step
+#   range         : +/- saturation limit
+#   delay_s       : transport delay
+#
+# Values are datasheet-representative (consumer ~ MPU-6050 class,
+# industrial ~ ADIS1650x class), not exact part numbers. Tune freely.
+
+ideal:
+  description: Perfect sensor (passthrough). Reference for "best possible" balancing.
+  seed: 0
+  temperature: {type: constant, value: 25.0}
+  accel: {}
+  gyro: {}
+
+consumer_mems:
+  description: Consumer MEMS (MPU-6050 class) with power-on self-heating.
+  seed: 1
+  temperature: {type: self_heating, ambient: 25.0, rise: 35.0, tau: 90.0}
+  accel:
+    noise_density: 3.0e-3
+    bias0: 0.20
+    tempco_bias: 5.0e-3
+    tempco_scale: 2.0e-4
+    bias_rw: 1.0e-4
+    bandwidth_hz: 100.0
+    quant_lsb: 4.8e-3
+    range: 157.0
+    delay_s: 5.0e-3
+  gyro:
+    noise_density: 1.0e-4
+    bias0: 2.0e-2
+    tempco_bias: 5.0e-4
+    tempco_scale: 2.0e-4
+    bias_rw: 1.0e-5
+    g_sensitivity: 2.0e-4
+    bandwidth_hz: 100.0
+    quant_lsb: 1.0e-3
+    range: 34.9
+    delay_s: 5.0e-3
+
+industrial:
+  description: Industrial-grade IMU (ADIS1650x class), tight temperature behavior.
+  seed: 2
+  temperature: {type: self_heating, ambient: 25.0, rise: 12.0, tau: 120.0}
+  accel:
+    noise_density: 3.0e-4
+    bias0: 1.0e-2
+    tempco_bias: 5.0e-4
+    tempco_scale: 2.0e-5
+    bias_rw: 1.0e-5
+    bandwidth_hz: 330.0
+    quant_lsb: 6.0e-4
+    range: 392.0
+    delay_s: 2.0e-3
+  gyro:
+    noise_density: 2.0e-5
+    bias0: 2.0e-3
+    tempco_bias: 5.0e-5
+    tempco_scale: 2.0e-5
+    bias_rw: 1.0e-6
+    g_sensitivity: 1.0e-5
+    bandwidth_hz: 330.0
+    quant_lsb: 1.0e-4
+    range: 8.7
+    delay_s: 2.0e-3

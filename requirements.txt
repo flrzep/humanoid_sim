@@ -1,0 +1,6 @@
+mujoco>=3.9.0
+numpy>=2.0
+scipy>=1.13
+pyyaml>=6.0
+Pillow>=10.0   # JPEG encoding for the browser demo (scripts/web_demo.py)
+torch>=2.4     # only for the G1 RL policy controller (--robot g1); LQR robots don't need it

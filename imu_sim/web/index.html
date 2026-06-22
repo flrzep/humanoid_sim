@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>IMU_Sim — Humanoid Balancing Demo</title>
+<style>
+  :root { --bg:#0f1419; --panel:#1a2230; --line:#2b3647; --fg:#e6edf3; --muted:#8b98a9;
+          --accent:#4ea1ff; --good:#3fb950; --bad:#f85149; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0; font-size:18px; font-weight:600; }
+  header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
+  .wrap { display:flex; gap:20px; padding:20px; flex-wrap:wrap; align-items:flex-start; }
+  .stage { flex:1 1 420px; min-width:300px; }
+  .video { width:100%; height:auto; display:block; cursor:crosshair;
+           aspect-ratio:4/3; max-height:82vh; object-fit:contain;
+           border:1px solid var(--line); border-radius:8px; background:#000; }
+  .hint { color:var(--muted); font-size:12px; margin-top:6px; }
+  .side { flex:0 0 300px; display:flex; flex-direction:column; gap:16px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
+  .card h2 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.06em;
+             color:var(--muted); font-weight:600; }
+  label { display:block; font-size:12px; color:var(--muted); margin:8px 0 4px; }
+  select, button, input[type=range] { width:100%; }
+  select, button { background:#243044; color:var(--fg); border:1px solid var(--line);
+                   border-radius:6px; padding:8px 10px; font-size:14px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); color:#05101f; border-color:var(--accent); font-weight:600; }
+  .pad { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:6px; }
+  .pad button { padding:10px 0; }
+  .pad .sp { visibility:hidden; }
+  .row { display:flex; justify-content:space-between; padding:3px 0; }
+  .row .k { color:var(--muted); }
+  .row .v { font-variant-numeric:tabular-nums; font-weight:600; }
+  .status { font-weight:700; }
+  .status.balancing { color:var(--good); }
+  .status.fallen, .status.off { color:var(--bad); }
+  .mag { display:flex; align-items:center; gap:8px; }
+  .mag input { flex:1; }
+  .mag .val { width:54px; text-align:right; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+<header>
+  <h1>P3 Humanoid Sim</h1>
+</header>
+
+<div class="wrap">
+  <div class="stage">
+    <img id="video" class="video" src="/stream" alt="simulation"/>
+    <div class="hint">Click on the view to shove the robot toward that point. Use the buttons for precise directions.</div>
+  </div>
+
+  <div class="side">
+    <div class="card">
+      <h2>Setup</h2>
+      <label for="robot">Robot</label>
+      <select id="robot"></select>
+      <label for="imu">IMU model</label>
+      <select id="imu"></select>
+      <div style="height:10px"></div>
+      <button id="reset" class="primary">Reset / re-stand (R)</button>
+    </div>
+
+    <div class="card">
+      <h2>Disturbance</h2>
+      <div class="mag">
+        <input id="mag" type="range" min="20" max="400" step="10" value="150"/>
+        <span class="val"><span id="magval">150</span> N</span>
+      </div>
+      <div class="pad">
+        <span class="sp"></span><button data-fx="1"  data-fy="0">▲ fwd</button><span class="sp"></span>
+        <button data-fx="0" data-fy="1">◀ left</button>
+        <button id="rand">random</button>
+        <button data-fx="0" data-fy="-1">right ▶</button>
+        <span class="sp"></span><button data-fx="-1" data-fy="0">▼ back</button><span class="sp"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Telemetry</h2>
+      <div class="row"><span class="k">Status</span><span id="t_status" class="v status">—</span></div>
+      <div class="row"><span class="k">Time</span><span id="t_time" class="v">—</span></div>
+      <div class="row"><span class="k">True tilt</span><span id="t_true" class="v">—</span></div>
+      <div class="row"><span class="k">Estimated tilt</span><span id="t_est" class="v">—</span></div>
+      <div class="row"><span class="k">Tilt est. error</span><span id="t_err" class="v">—</span></div>
+      <div class="row"><span class="k">IMU temp.</span><span id="t_temp" class="v">—</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+async function cmd(obj){ await fetch('/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(obj)}); }
+
+function magnitude(){ return parseFloat($('#mag').value); }
+
+async function init(){
+  const meta = await (await fetch('/meta')).json();
+  const robot = $('#robot'), imu = $('#imu');
+  meta.robots.forEach(r => robot.add(new Option(r, r)));
+  meta.imus.forEach(i => imu.add(new Option(i, i)));
+  robot.value = meta.robot; imu.value = meta.imu;
+  robot.onchange = () => cmd({action:'set_robot', robot:robot.value});
+  imu.onchange   = () => cmd({action:'set_imu',   imu:imu.value});
+}
+
+$('#reset').onclick = () => cmd({action:'reset'});
+$('#mag').oninput   = () => $('#magval').textContent = $('#mag').value;
+
+document.querySelectorAll('.pad button[data-fx]').forEach(b => {
+  b.onclick = () => {
+    const m = magnitude();
+    cmd({action:'push', fx:parseFloat(b.dataset.fx)*m, fy:parseFloat(b.dataset.fy)*m});
+  };
+});
+$('#rand').onclick = () => {
+  const a = Math.random()*2*Math.PI, m = magnitude();
+  cmd({action:'push', fx:Math.cos(a)*m, fy:Math.sin(a)*m});
+};
+
+// Click on the video: push toward the click point (screen -> rough world x/y).
+$('#video').onclick = (e) => {
+  const r = e.target.getBoundingClientRect();
+  const nx = (e.clientX - r.left)/r.width - 0.5;   // -0.5 .. 0.5 (right +)
+  const ny = (e.clientY - r.top)/r.height - 0.5;   // down +
+  // Camera looks along -x from azimuth 120deg; map screen to a horizontal shove.
+  const m = magnitude();
+  cmd({action:'push', fx:-ny*2*m, fy:-nx*2*m});
+};
+
+async function poll(){
+  try{
+    const t = await (await fetch('/telemetry')).json();
+    if (t && t.status){
+      const s = $('#t_status'); s.textContent = t.status; s.className = 'v status '+t.status;
+      $('#t_time').textContent = t.t + ' s';
+      $('#t_true').textContent = t.true_tilt + '°';
+      $('#t_est').textContent  = t.est_tilt + '°';
+      $('#t_err').textContent  = t.tilt_err + '°';
+      $('#t_temp').textContent = (t.temperature==null? 'n/a' : t.temperature + ' °C');
+    }
+  }catch(e){}
+}
+document.addEventListener('keydown', e => { if (e.key==='r'||e.key==='R') cmd({action:'reset'}); });
+
+init();
+setInterval(poll, 200);
+</script>
+</body>
+</html>
