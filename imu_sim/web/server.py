@@ -64,7 +64,7 @@ class SimWorker(threading.Thread):
         spec = M.ROBOTS[robot]
         self.controller = make_controller(self.hm, robot)
         self.estimator = ComplementaryFilter(**spec.get("estimator", {}))
-        self.sim = BalanceSim(self.hm, self.controller, presets.build_imu(imu), self.estimator)
+        self.sim = BalanceSim(self.hm, self.controller, presets.build_imu(imu, randomize=True), self.estimator)
         self.base_body = int(self.hm.model.site_bodyid[self.hm.imu_site_id])
         self.controlling = True
         self.push_steps = 0
@@ -171,7 +171,7 @@ class SimWorker(threading.Thread):
                 name = cmd.get("imu", self.imu_name)
                 if name in presets.list_presets():
                     self.imu_name = name
-                    self.sim.imu = presets.build_imu(name)
+                    self.sim.imu = presets.build_imu(name, randomize=True)
                     self.sim.reset()
                     self.controlling = True
                     resync = True

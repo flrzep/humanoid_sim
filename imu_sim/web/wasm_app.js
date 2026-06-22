@@ -27,21 +27,54 @@ let robotName = null, switching = false;
 const COL_TRUTH = '#3fb950', COL_MEAS = '#f0883e';
 let tiltChart, gyroChart, axisIdx = 1;    // 0 = roll, 1 = pitch
 
+// Smallest "nice" number (1/2/5 × 10^k) >= x. Used for grid increments.
+function niceStep(x) {
+  if (!(x > 0)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(x)));
+  const f = x / p;
+  return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10) * p;
+}
+
 // Rolling two-line strip chart on a <canvas>. Series `a` = ground truth, `b` = sensor/
-// estimate. Auto-scales y to the visible window (always including 0), breaks the line on
-// null (e.g. controller off), and resets if the sim clock jumps backward (reset).
+// estimate. The y-axis snaps to whole "nice" increments and is sticky: it grows
+// immediately when data exceeds it but shrinks only with hysteresis, so a slowly growing
+// offset visibly climbs a stable grid instead of the grid rescaling under it. Breaks the
+// line on null (controller off) and resets if the sim clock jumps backward (reset).
 class Strip {
-  constructor(canvas, windowSec = 12) {
+  constructor(canvas, minSpan = 1, windowSec = 12) {
     this.cv = canvas; this.ctx = canvas.getContext('2d');
-    this.win = windowSec; this.data = [];
+    this.win = windowSec; this.minSpan = minSpan; this.data = [];
+    this.lo = this.hi = this.step = null;
   }
-  reset() { this.data = []; }
+  reset() { this.data = []; this.lo = this.hi = this.step = null; }
   push(t, a, b) {
-    if (this.data.length && t < this.data[this.data.length - 1].t) this.data = [];
+    if (this.data.length && t < this.data[this.data.length - 1].t) this.reset();
     this.data.push({ t, a, b });
     const tmin = t - this.win;
     let i = 0; while (i < this.data.length && this.data[i].t < tmin) i++;
     if (i) this.data.splice(0, i);
+  }
+  _resnap(dlo, dhi) {
+    this.lo = Math.floor(Math.min(dlo, 0) / this.step) * this.step;
+    this.hi = Math.ceil(Math.max(dhi, 0) / this.step) * this.step;
+    if (this.hi <= this.lo) this.hi = this.lo + this.step;
+  }
+  _range(dlo, dhi) {
+    dlo = Math.min(dlo, 0); dhi = Math.max(dhi, 0);
+    const minStep = niceStep(this.minSpan / 4);
+    if (this.step == null) {
+      this.step = Math.max(minStep, niceStep((dhi - dlo) / 4));
+      this._resnap(dlo, dhi);
+    }
+    const s = this.step;
+    while (dhi > this.hi - 1e-9) this.hi += s;                 // grow up in whole steps
+    while (dlo < this.lo + 1e-9) this.lo -= s;                 // grow down
+    while (this.hi - s > dhi + 1e-9 && this.hi - s > 1e-9) this.hi -= s;   // hysteresis shrink
+    while (this.lo + s < dlo - 1e-9 && this.lo + s < -1e-9) this.lo += s;
+    // Re-bucket the step if the grid gets too dense or too sparse (discrete jump).
+    const divs = (this.hi - this.lo) / s;
+    if (divs > 8) { this.step = niceStep(s * 1.5); this._resnap(dlo, dhi); }
+    else if (s > minStep && divs < 3) { this.step = Math.max(minStep, niceStep(s * 0.6)); this._resnap(dlo, dhi); }
   }
   draw() {
     const cv = this.cv, c = this.ctx;
@@ -58,32 +91,31 @@ class Strip {
     const d = this.data;
     if (d.length < 2) return;
 
-    let lo = Infinity, hi = -Infinity;
-    for (const p of d) {
-      for (const v of [p.a, p.b]) {
-        if (v == null || Number.isNaN(v)) continue;
-        if (v < lo) lo = v; if (v > hi) hi = v;
-      }
+    let dlo = Infinity, dhi = -Infinity;
+    for (const p of d) for (const v of [p.a, p.b]) {
+      if (v == null || Number.isNaN(v)) continue;
+      if (v < dlo) dlo = v; if (v > dhi) dhi = v;
     }
-    if (!isFinite(lo)) return;
-    lo = Math.min(lo, 0); hi = Math.max(hi, 0);
-    const span = (hi - lo) || 1, pad = span * 0.12;
-    lo -= pad; hi += pad;
+    if (!isFinite(dlo)) return;
+    this._range(dlo, dhi);
+    const lo = this.lo, hi = this.hi, step = this.step;
     const tEnd = d[d.length - 1].t, tStart = tEnd - this.win;
     const X = (t) => x0 + (t - tStart) / this.win * (x1 - x0);
     const Y = (v) => y1 - (v - lo) / (hi - lo) * (y1 - y0);
+    const dec = Math.max(0, -Math.floor(Math.log10(step)) + 0);
+    const fmt = (v) => (Math.abs(v) < 1e-9 ? '0' : v.toFixed(dec));
 
-    c.fillStyle = '#8b98a9'; c.font = '10px system-ui'; c.textAlign = 'right'; c.textBaseline = 'middle';
-    c.fillText(hi.toFixed(2), x0 - 5, Y(hi) + 4);
-    c.fillText(lo.toFixed(2), x0 - 5, Y(lo) - 4);
+    // Gridlines at each increment (zero emphasised), with labels.
+    c.font = '10px system-ui'; c.textAlign = 'right'; c.textBaseline = 'middle';
+    for (let v = lo; v <= hi + 1e-9; v += step) {
+      const yy = Y(v), zero = Math.abs(v) < 1e-9;
+      c.strokeStyle = zero ? '#3a475a' : '#212c3b'; c.lineWidth = 1;
+      c.beginPath(); c.moveTo(x0, yy + 0.5); c.lineTo(x1, yy + 0.5); c.stroke();
+      c.fillStyle = '#8b98a9'; c.fillText(fmt(v), x0 - 5, yy);
+    }
 
     c.save();
     c.beginPath(); c.rect(x0, y0, x1 - x0, y1 - y0); c.clip();
-    if (lo < 0 && hi > 0) {
-      const yz = Y(0);
-      c.strokeStyle = '#3a475a'; c.setLineDash([3, 3]);
-      c.beginPath(); c.moveTo(x0, yz); c.lineTo(x1, yz); c.stroke(); c.setLineDash([]);
-    }
     const line = (key, color) => {
       c.strokeStyle = color; c.lineWidth = 1.5; c.beginPath();
       let started = false;
@@ -356,8 +388,8 @@ function initUI(meta) {
   meta.imus.forEach((i) => imu.add(new Option(i, i)));
   robot.value = meta.robot; imu.value = meta.imu;
 
-  tiltChart = new Strip($('#chart_tilt'));
-  gyroChart = new Strip($('#chart_gyro'));
+  tiltChart = new Strip($('#chart_tilt'), 4);     // min span ~4° so ideal IMU isn't over-zoomed
+  gyroChart = new Strip($('#chart_gyro'), 0.2);   // min span ~0.2 rad/s
   updateAxisLabels();
   $('#axis').onchange = () => {
     axisIdx = parseInt($('#axis').value, 10);

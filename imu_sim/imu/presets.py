@@ -26,10 +26,14 @@ def build_imu(
     path: str | Path = DEFAULT_PRESETS,
     seed: int | None = None,
     temperature: TemperatureProfile | None = None,
+    randomize: bool = False,
 ) -> ErrorIMU:
     """Construct an :class:`ErrorIMU` from a named preset.
 
     ``seed`` and ``temperature`` override the preset's defaults when given.
+    ``randomize=True`` re-seeds the IMU from system entropy on every reset and gives
+    the temperature drift a random per-axis direction, so the drift varies run to run
+    (used by the interactive demo; tests keep the default deterministic behaviour).
     """
     presets = load_presets(path)
     if name not in presets:
@@ -39,4 +43,4 @@ def build_imu(
     gyro = ChannelConfig(**(spec.get("gyro") or {}))
     temp = temperature if temperature is not None else build_profile(spec.get("temperature"))
     seed = spec.get("seed", 0) if seed is None else seed
-    return ErrorIMU(accel=accel, gyro=gyro, temperature=temp, seed=seed, name=name)
+    return ErrorIMU(accel=accel, gyro=gyro, temperature=temp, seed=seed, name=name, randomize=randomize)

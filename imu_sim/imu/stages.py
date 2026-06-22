@@ -33,7 +33,7 @@ class Stage:
     def apply(self, x: np.ndarray, ctx: StageContext) -> np.ndarray:  # pragma: no cover
         raise NotImplementedError
 
-    def reset(self) -> None:
+    def reset(self, rng: np.random.Generator | None = None, randomize: bool = False) -> None:
         pass
 
 
@@ -69,16 +69,32 @@ class GSensitivity(Stage):
 
 
 class TemperatureBias(Stage):
-    """Add bias0 + tempco_bias*(T - T_ref) on every axis."""
+    """Add bias0 + tempco_bias*dir*(T - T_ref).
+
+    ``dir`` is a per-axis direction multiplier. By default it is all-ones (the
+    temperature drift is identical on every axis, the original behaviour). When the
+    IMU is reset with ``randomize=True`` it is redrawn as a random unit direction
+    (scaled by sqrt(3) so the overall drift magnitude is unchanged), so the *direction*
+    the attitude estimate drifts varies run to run, like unit-to-unit tempco spread.
+    """
 
     def __init__(self, bias0: float, tempco_bias: float, t_ref: float):
         self.bias0 = bias0
         self.tempco_bias = tempco_bias
         self.t_ref = t_ref
+        self.dir = np.ones(3)
 
     def apply(self, x, ctx):
-        b = self.bias0 + self.tempco_bias * (ctx.temperature - self.t_ref)
+        b = self.bias0 + self.tempco_bias * self.dir * (ctx.temperature - self.t_ref)
         return x + b
+
+    def reset(self, rng=None, randomize=False):
+        if randomize and rng is not None and self.tempco_bias:
+            d = rng.standard_normal(3)
+            n = float(np.linalg.norm(d))
+            self.dir = d / n * math.sqrt(3.0) if n > 1e-9 else np.ones(3)
+        else:
+            self.dir = np.ones(3)
 
 
 class RandomWalkBias(Stage):
@@ -92,7 +108,7 @@ class RandomWalkBias(Stage):
         self.bias = self.bias + self.rw_rate * math.sqrt(ctx.dt) * ctx.rng.standard_normal(3)
         return x + self.bias
 
-    def reset(self):
+    def reset(self, rng=None, randomize=False):
         self.bias = np.zeros(3)
 
 
@@ -123,7 +139,7 @@ class Bandwidth(Stage):
         self.y = self.y + alpha * (x - self.y)
         return self.y
 
-    def reset(self):
+    def reset(self, rng=None, randomize=False):
         self.y = None
 
 
@@ -165,7 +181,7 @@ class Delay(Stage):
         self.buf.append(x.copy())
         return out
 
-    def reset(self):
+    def reset(self, rng=None, randomize=False):
         self.buf = None
         self.n = None
 
@@ -204,20 +220,24 @@ class ErrorIMU(IMUModel):
         temperature: TemperatureProfile | None = None,
         seed: int = 0,
         name: str = "custom",
+        randomize: bool = False,
     ):
         self.accel_cfg = accel
         self.gyro_cfg = gyro
         self.temperature = temperature or Constant()
         self.name = name
         self.seed = seed
+        self.randomize = randomize
         self.rng = np.random.default_rng(seed)
         self.accel_stages = build_channel(accel, is_gyro=False)
         self.gyro_stages = build_channel(gyro, is_gyro=True)
 
     def reset(self) -> None:
-        self.rng = np.random.default_rng(self.seed)
+        # ``randomize`` -> fresh entropy each reset, so the noise sequence *and* the
+        # per-axis drift direction differ run to run. Otherwise reproducible from seed.
+        self.rng = np.random.default_rng() if self.randomize else np.random.default_rng(self.seed)
         for s in self.accel_stages + self.gyro_stages:
-            s.reset()
+            s.reset(self.rng, self.randomize)
 
     def measure(self, true_accel, true_gyro, t, dt) -> ImuReading:
         temp = self.temperature(t)
