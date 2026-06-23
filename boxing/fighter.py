@@ -12,10 +12,10 @@ from __future__ import annotations
 import numpy as np
 
 from imu_sim.control.policy import gravity_orientation
-from .arena import Fighter
+from .arena import Fighter, PUNCH_ANGLE
 
-# Lunge "punch": a short, hard forward command toward the opponent.
-PUNCH_DURATION = 0.35      # seconds
+# A punch = swing the shoulder forward (arm servo) + a short committed lunge.
+PUNCH_DURATION = 0.35      # seconds the arm stays extended / the lunge is held
 LUNGE_VX = 0.8             # forward speed during a punch (m/s, robot frame +x = opponent)
 LUNGE_VY = 0.35           # lateral lead for left/right punches (m/s)
 
@@ -61,15 +61,17 @@ class FighterController:
         self.cmd = np.zeros(3, dtype=np.float32)
         self.move_cmd = np.zeros(3, dtype=np.float32)
         self.punch_steps = 0
+        self.landed = False
 
     def set_move(self, vx, vy, yaw) -> None:
         self.move_cmd = np.clip(np.array([vx, vy, yaw], dtype=np.float32),
                                 [-0.8, -0.5, -0.8], [0.8, 0.5, 0.8])
 
     def punch(self, side: int) -> None:
-        """Trigger a lunge punch. side: -1 right, +1 left."""
+        """Trigger a punch. side: -1 right, +1 left."""
         self.punch_steps = max(self.punch_steps, int(round(PUNCH_DURATION / self._dt)))
         self.punch_side = 1 if side >= 0 else -1
+        self.landed = False        # this punch hasn't connected yet
 
     @property
     def punching(self) -> bool:
@@ -85,8 +87,8 @@ class FighterController:
         f = self.f
         quat = data.qpos[f.base_quat]                 # ground-truth base orientation
         omega = data.qvel[f.base_avel]                # body-frame angular velocity
-        qj = (data.qpos[f.jpos] - self.default) * self.dof_pos_scale
-        dqj = data.qvel[f.jvel] * self.dof_vel_scale
+        qj = (data.qpos[f.leg_q] - self.default) * self.dof_pos_scale
+        dqj = data.qvel[f.leg_v] * self.dof_vel_scale
         grav = gravity_orientation(np.asarray(quat, dtype=np.float32))
 
         phase = (self.counter * self._dt % self.gait_period) / self.gait_period
@@ -115,6 +117,14 @@ class FighterController:
             self.target = self.action * self.action_scale + self.default
 
         f = self.f
-        qj = data.qpos[f.jpos]
-        dqj = data.qvel[f.jvel]
-        data.ctrl[f.ctrl] = (self.target - qj) * self.kps - dqj * self.kds
+        # Legs: PD torque from the policy's joint targets.
+        qj = data.qpos[f.leg_q]
+        dqj = data.qvel[f.leg_v]
+        data.ctrl[f.leg_c] = (self.target - qj) * self.kps - dqj * self.kds
+
+        # Arms: position servo. Resting at 0; the punching side extends while the
+        # punch is active, then the servo snaps it back.
+        arm = [0.0, 0.0]
+        if self.punch_steps > 0:
+            arm[0 if self.punch_side > 0 else 1] = PUNCH_ANGLE
+        data.ctrl[f.arm_c] = arm

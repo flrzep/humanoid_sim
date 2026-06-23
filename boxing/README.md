@@ -30,15 +30,19 @@ MuJoCo-WASM and renders it (first load fetches three.js + `mujoco-js` from a CDN
 gamepad *i* drives player *i* — left stick moves, right stick turns, **L1 / R1** (or
 Square / Circle) punch left / right, **Options** rematches.
 
-## How a "punch" works (and a model limitation)
+## How a punch works
 
-The `g1_12dof` boxer is **leg-only**: 12 actuated leg joints, but the arms and gloves are
-rigid (no shoulder/elbow joints). So a scripted *arm* swing isn't possible without adding
-articulated arms to the model. Instead a **punch is a scripted committed lunge** — a hard
-forward charge toward the opponent (left/right pick the lead/strafe side); the rigid
-gloves/body make contact and a knockdown (base height below `KO_HEIGHT`) ends the round.
-The punch is wired through `FighterController.punch()`, so when articulated arms are added
-later it can drive an arm trajectory instead with no other changes.
+The stock `g1_12dof` boxer is **leg-only** — the arms/gloves are rigid geoms with no
+joints. So `arena.articulate_arms()` adds a **shoulder-pitch hinge + position servo per
+arm** (moving that arm's geoms onto a new hinged body) at model-build time. The arms are
+appended *after* the legs, so the 12 leg joints keep their indices and the locomotion
+policy is untouched; a stiff servo holds the arms at rest so balance is barely affected.
+
+A punch (`FighterController.punch(side)`) does two things: swings the chosen shoulder
+forward (the visible jab) **and** triggers a committed forward lunge. If the opponent is
+within `HIT_RANGE` when the punch is active, it lands a **knockback impulse** (`HIT_FORCE`)
+— tuned so a clean hit is a one-punch knockdown. A knockdown (base height below
+`KO_HEIGHT`) ends the round. Tune feel via `HIT_FORCE` / `PUNCH_ANGLE` / `HIT_RANGE`.
 
 ## Architecture
 
