@@ -36,7 +36,19 @@ the quality of the attitude estimate the controller relies on.
 
 ## Install
 
-Requires Python 3.10+ (developed on 3.14).
+Requires Python 3.10+ (developed on 3.14). All model assets and policy weights are in
+the repo, and the browser demos fetch three.js / mujoco-js from a CDN, so there is
+nothing else to download.
+
+**Windows (one step):** from a clean machine, just run the setup script — it finds a
+Python 3.10+, builds `.venv`, installs everything, and smoke-tests the install.
+
+```powershell
+.\setup.ps1            # or double-click setup.bat
+.\setup.ps1 -Recreate  # rebuild the venv from scratch
+```
+
+**Manual (any OS):**
 
 ```bash
 python -m venv .venv
