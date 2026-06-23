@@ -19,10 +19,15 @@ KO_HEIGHT = 0.45          # base height (m) below which a fighter is "down"
 class GameSim:
     def __init__(self):
         self.cfg = M.ROBOTS["g1_boxer"]["policy"]
-        self.policy, self._torch = load_policy(self.cfg["path"])
         self.arena = build_arena()
-        self.fighters = [FighterController(self.policy, self._torch, f, self.cfg)
-                         for f in self.arena.fighters]
+        # Each fighter gets its OWN policy instance: the TorchScript module carries
+        # internal state, so two fighters sharing one module corrupt each other (both
+        # destabilise within seconds). Separate instances each balance independently.
+        self.fighters = []
+        for f in self.arena.fighters:
+            policy, torch_mod = load_policy(self.cfg["path"])
+            self._torch = torch_mod
+            self.fighters.append(FighterController(policy, torch_mod, f, self.cfg))
         self.reset()
 
     def reset(self) -> None:
