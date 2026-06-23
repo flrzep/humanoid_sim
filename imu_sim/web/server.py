@@ -62,13 +62,16 @@ class SimWorker(threading.Thread):
     def _build(self, robot: str, imu: str) -> None:
         self.hm = M.load_robot(robot)
         spec = M.ROBOTS[robot]
-        self.controller = make_controller(self.hm, robot)
+        self.policy_options = M.policy_options(robot)
+        self.policy_name = self.policy_options[0]
+        self.controller = make_controller(self.hm, robot, self.policy_name)
         self.estimator = ComplementaryFilter(**spec.get("estimator", {}))
         self.sim = BalanceSim(self.hm, self.controller, presets.build_imu(imu, randomize=True), self.estimator)
         self.base_body = int(self.hm.model.site_bodyid[self.hm.imu_site_id])
         self.controlling = True
         self.push_steps = 0
         self.push_force = np.zeros(3)
+        self.push_body = self.base_body
         self.robot_name, self.imu_name = robot, imu
 
     def _make_camera(self) -> mujoco.MjvCamera:
@@ -132,7 +135,7 @@ class SimWorker(threading.Thread):
                 while self.sim.t < target and guard < max_steps:
                     self.hm.data.xfrc_applied[:] = 0.0
                     if self.push_steps > 0:
-                        self.hm.data.xfrc_applied[self.base_body, :3] = self.push_force
+                        self.hm.data.xfrc_applied[self.push_body, :3] = self.push_force
                         self.push_steps -= 1
                     last_tm = self.sim.step(control=self.controlling)
                     if self.controlling and last_tm.fallen:
@@ -181,7 +184,20 @@ class SimWorker(threading.Thread):
                     self._rebuild_robot(name)
                     resync = True
             elif action == "push":
-                self._start_push(cmd.get("fx", 0.0), cmd.get("fy", 0.0))
+                self._start_push(cmd.get("fx", 0.0), cmd.get("fy", 0.0),
+                                 cmd.get("fz", 0.0), cmd.get("body"))
+            elif action == "move":
+                self.controller.set_command(cmd.get("vx", 0.0), cmd.get("vy", 0.0),
+                                            cmd.get("yaw", 0.0))
+            elif action == "set_policy":
+                name = cmd.get("policy")
+                if name in self.policy_options and name != self.policy_name:
+                    self.policy_name = name
+                    self.controller = make_controller(self.hm, self.robot_name, name)
+                    self.sim.controller = self.controller
+                    self.sim.reset()
+                    self.controlling = True
+                    resync = True
         return resync
 
     def _rebuild_robot(self, name: str) -> None:
@@ -194,8 +210,10 @@ class SimWorker(threading.Thread):
             self.renderer = mujoco.Renderer(self.hm.model, self.height, self.width)
             self.camera = self._make_camera()
 
-    def _start_push(self, fx: float, fy: float) -> None:
-        self.push_force = np.array([float(fx), float(fy), 0.0])
+    def _start_push(self, fx: float, fy: float, fz: float = 0.0, body=None) -> None:
+        self.push_force = np.array([float(fx), float(fy), float(fz)])
+        nbody = int(self.hm.model.nbody)
+        self.push_body = self.base_body if body is None else max(1, min(int(body), nbody - 1))
         self.push_steps = max(1, round(PUSH_DURATION / self.hm.dt))
 
     @staticmethod

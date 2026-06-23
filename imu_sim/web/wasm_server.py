@@ -101,7 +101,8 @@ class Handler(BaseHTTPRequestHandler):
             self._file(HERE / "wasm_app.js", "text/javascript; charset=utf-8")
         elif url.path == "/meta":
             self._json({"robots": list(M.ROBOTS), "imus": presets.list_presets(),
-                        "robot": self.worker.robot_name, "imu": self.worker.imu_name})
+                        "robot": self.worker.robot_name, "imu": self.worker.imu_name,
+                        "policies": self.worker.policy_options, "policy": self.worker.policy_name})
         elif url.path == "/model/manifest":
             robot = q.get("robot", [self.worker.robot_name])[0]
             _, files = collect_model_files(robot)

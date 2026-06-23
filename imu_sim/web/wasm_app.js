@@ -23,6 +23,13 @@ let scene, camera, renderer, controls;
 let geomMeshes = [];                      // [{ mesh, g }]
 let robotName = null, switching = false;
 
+// input + interaction
+const keys = {};                          // pressed WASD/QE state
+let command = [0, 0, 0];                  // vx, vy, yaw last sent
+const raycaster = new THREE.Raycaster();
+let arrow = null;                         // force arrow shown during a shove drag
+let drag = null;                          // active shove drag {body, x0, y0, point}
+
 // telemetry charts
 const COL_TRUTH = '#3fb950', COL_MEAS = '#f0883e';
 let tiltChart, gyroChart, axisIdx = 1;    // 0 = roll, 1 = pitch
@@ -183,6 +190,10 @@ function initThree() {
   grid.rotateX(Math.PI / 2);              // GridHelper is XZ by default -> make it XY
   scene.add(grid);
 
+  arrow = new THREE.ArrowHelper(new THREE.Vector3(1, 0, 0), new THREE.Vector3(), 0.5, 0xf85149, 0.12, 0.08);
+  arrow.visible = false;
+  scene.add(arrow);
+
   resize();
   window.addEventListener('resize', resize);
 }
@@ -275,6 +286,7 @@ function buildScene() {
     });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.matrixAutoUpdate = false;
+    mesh.userData.body = model.geom_bodyid[g];   // for raycast-pick shoving
     scene.add(mesh);
     geomMeshes.push({ mesh, g });
   }
@@ -291,6 +303,7 @@ function syncPoses() {
       xmat[r + 6], xmat[r + 7], xmat[r + 8], xpos[p + 2],
       0, 0, 0, 1,
     );
+    o.mesh.matrixWorld.copy(o.mesh.matrix);   // meshes are scene children -> world == local
   }
 }
 
@@ -363,30 +376,80 @@ function updateTelemetry(t) {
   if (gyroChart && t.t != null) gyroChart.push(t.t, gt, gi);
 }
 
-// ---------------------------------------------------------------- UI wiring
-const magnitude = () => parseFloat($('#mag').value);
+// ---------------------------------------------------------------- WASD walking
+const CMD = [0.8, 0.4, 0.8];               // vx, vy(strafe), yaw scales
+function sendCommand() {
+  const vx  = (keys['w'] ? 1 : 0) - (keys['s'] ? 1 : 0);
+  const vy  = (keys['q'] ? 1 : 0) - (keys['e'] ? 1 : 0);   // strafe: body +y = left
+  const yaw = (keys['a'] ? 1 : 0) - (keys['d'] ? 1 : 0);   // turn left = +yaw
+  command = [vx * CMD[0], vy * CMD[1], yaw * CMD[2]];
+  $('#t_cmd').textContent = command.map((x) => x.toFixed(1)).join(', ');
+  cmd({ action: 'move', vx: command[0], vy: command[1], yaw: command[2] });
+}
 
-function pushScreen(e) {                   // shift-click -> shove toward the click point
-  const r = $('#canvas').getBoundingClientRect();
-  const nx = (e.clientX - r.left) / r.width - 0.5;   // right +
-  const ny = (e.clientY - r.top) / r.height - 0.5;   // down +
+// ---------------------------------------------------------------- mouse shove
+function pointerNDC(e) {
+  const r = renderer.domElement.getBoundingClientRect();
+  return new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1,
+                           -((e.clientY - r.top) / r.height) * 2 + 1);
+}
+function screenToWorld(dx, dy) {            // screen px drag -> world horizontal direction
   const fwd = new THREE.Vector3();
   camera.getWorldDirection(fwd); fwd.z = 0;
-  if (fwd.lengthSq() < 1e-6) return;
+  if (fwd.lengthSq() < 1e-6) return new THREE.Vector3();
   fwd.normalize();
-  const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 0, 1)).normalize();
-  const dir = new THREE.Vector3().addScaledVector(right, nx).addScaledVector(fwd, -ny);
-  if (dir.lengthSq() < 1e-6) return;
+  const right = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 0, 1), fwd).normalize();
+  return new THREE.Vector3().addScaledVector(right, dx).addScaledVector(fwd, -dy);
+}
+function dragForce(e) {                     // -> {dir, force}
+  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
+  const dir = screenToWorld(dx, dy);
+  const force = Math.min(600, Math.hypot(dx, dy) * 2.0);
+  return { dir, force };
+}
+function onPointerDown(e) {
+  if (e.button !== 0 || !model || switching) return;
+  raycaster.setFromCamera(pointerNDC(e), camera);
+  const hits = raycaster.intersectObjects(geomMeshes.map((o) => o.mesh), false);
+  if (!hits.length) return;                 // empty space -> let OrbitControls orbit
+  drag = { body: hits[0].object.userData.body, x0: e.clientX, y0: e.clientY, point: hits[0].point.clone() };
+  controls.enabled = false;
+  renderer.domElement.style.cursor = 'grabbing';
+}
+function onPointerMove(e) {
+  if (!drag) return;
+  const { dir, force } = dragForce(e);
+  if (dir.lengthSq() < 1e-9 || force < 1) { arrow.visible = false; return; }
   dir.normalize();
-  const m = magnitude();
-  cmd({ action: 'push', fx: dir.x * m, fy: dir.y * m });
+  arrow.position.copy(drag.point);
+  arrow.setDirection(dir);
+  arrow.setLength(0.2 + force / 300, 0.1, 0.07);
+  arrow.visible = true;
+}
+function onPointerUp() {
+  if (!drag) return;
+  const { dir, force } = dragForce({ clientX: lastPointer.x, clientY: lastPointer.y });
+  if (dir.lengthSq() > 1e-9 && force >= 5) {
+    dir.normalize();
+    cmd({ action: 'push', body: drag.body, fx: dir.x * force, fy: dir.y * force });
+  }
+  drag = null; arrow.visible = false; controls.enabled = true;
+  renderer.domElement.style.cursor = 'grab';
+}
+const lastPointer = { x: 0, y: 0 };
+
+// ---------------------------------------------------------------- UI wiring
+function fillSelect(sel, items, current) {
+  sel.innerHTML = '';
+  items.forEach((it) => sel.add(new Option(it, it)));
+  if (current != null) sel.value = current;
 }
 
 function initUI(meta) {
-  const robot = $('#robot'), imu = $('#imu');
-  meta.robots.forEach((r) => robot.add(new Option(r, r)));
-  meta.imus.forEach((i) => imu.add(new Option(i, i)));
-  robot.value = meta.robot; imu.value = meta.imu;
+  const robot = $('#robot'), imu = $('#imu'), policy = $('#policy');
+  fillSelect(robot, meta.robots, meta.robot);
+  fillSelect(imu, meta.imus, meta.imu);
+  fillSelect(policy, meta.policies || [], meta.policy);
 
   tiltChart = new Strip($('#chart_tilt'), 4);     // min span ~4° so ideal IMU isn't over-zoomed
   gyroChart = new Strip($('#chart_gyro'), 0.2);   // min span ~0.2 rad/s
@@ -402,28 +465,30 @@ function initUI(meta) {
     overlay('Switching robot…');
     await cmd({ action: 'set_robot', robot: robot.value });
     await loadRobot(robot.value);
+    const m = await (await fetch('/meta')).json();
+    fillSelect(policy, m.policies || [], m.policy);
+    tiltChart.reset(); gyroChart.reset();
     switching = false;
   };
   imu.onchange = () => cmd({ action: 'set_imu', imu: imu.value });
-
+  policy.onchange = () => cmd({ action: 'set_policy', policy: policy.value });
   $('#reset').onclick = () => cmd({ action: 'reset' });
-  $('#mag').oninput = () => { $('#magval').textContent = $('#mag').value; };
 
-  document.querySelectorAll('.pad button[data-fx]').forEach((b) => {
-    b.onclick = () => {
-      const m = magnitude();
-      cmd({ action: 'push', fx: parseFloat(b.dataset.fx) * m, fy: parseFloat(b.dataset.fy) * m });
-    };
+  // Keyboard: WASD/QE walk, R reset.
+  window.addEventListener('keydown', (e) => {
+    const k = e.key.toLowerCase();
+    if (k === 'r') { cmd({ action: 'reset' }); return; }
+    if ('wasdqe'.includes(k) && !keys[k]) { keys[k] = true; sendCommand(); }
   });
-  $('#rand').onclick = () => {
-    const a = Math.random() * 2 * Math.PI, m = magnitude();
-    cmd({ action: 'push', fx: Math.cos(a) * m, fy: Math.sin(a) * m });
-  };
+  window.addEventListener('keyup', (e) => {
+    const k = e.key.toLowerCase();
+    if ('wasdqe'.includes(k)) { keys[k] = false; sendCommand(); }
+  });
 
-  $('#canvas').addEventListener('pointerdown', (e) => { if (e.shiftKey) pushScreen(e); });
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'r' || e.key === 'R') cmd({ action: 'reset' });
-  });
+  // Mouse: drag the robot to shove it; drag empty space orbits (OrbitControls).
+  renderer.domElement.addEventListener('pointerdown', onPointerDown);
+  window.addEventListener('pointermove', (e) => { lastPointer.x = e.clientX; lastPointer.y = e.clientY; onPointerMove(e); });
+  window.addEventListener('pointerup', onPointerUp);
 }
 
 // ---------------------------------------------------------------- boot

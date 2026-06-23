@@ -30,3 +30,10 @@ class Controller(ABC):
 
     def reset(self) -> None:
         """Reset any internal controller state."""
+
+    def set_command(self, vx: float, vy: float, yaw: float) -> None:
+        """Set a locomotion velocity command (m/s, m/s, rad/s).
+
+        No-op for controllers that don't take a command (e.g. the LQR balancer);
+        overridden by the policy controller to drive walking.
+        """

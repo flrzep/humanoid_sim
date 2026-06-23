@@ -82,6 +82,22 @@ ROBOTS = {
 DEFAULT_MODEL = ROBOTS["classic"]["path"]
 
 
+def policy_options(robot: str) -> list[str]:
+    """Display names of the controllers/policies available for a robot.
+
+    A robot spec may carry a ``policies`` dict {name: policy_cfg} for swappable RL
+    policies; otherwise there is a single backend (the bundled locomotion policy, or
+    the LQR balancer). This is the extension point: drop another ``.pt`` in, add an
+    entry to ``policies``, and it appears in the UI switcher. (No alternative drop-in
+    G1 policy is currently available to download — others use a different obs spec.)
+    """
+    spec = ROBOTS[robot]
+    pols = spec.get("policies")
+    if pols:
+        return list(pols)
+    return ["Unitree RL (locomotion)"] if spec.get("control") == "policy" else ["LQR balancer"]
+
+
 @dataclass
 class HumanoidModel:
     """A loaded MuJoCo humanoid plus cached indices and an equilibrium."""

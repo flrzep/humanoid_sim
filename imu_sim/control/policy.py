@@ -64,10 +64,18 @@ class PolicyController(Controller):
         self.gait_period = cfg.get("gait_period", 0.8)
         self.reset()
 
+    # Conservative limits inside the policy's trained command range, so live
+    # teleop stays stable (the G1 locomotion policy walks, it isn't a sprinter).
+    CMD_LIMITS = np.array([0.8, 0.5, 0.8], dtype=np.float32)  # vx, vy, yaw
+
     def reset(self) -> None:
         self.counter = 0
         self.action = np.zeros(self.num_actions, dtype=np.float32)
         self.target = self.default_angles.copy()
+
+    def set_command(self, vx: float, vy: float, yaw: float) -> None:
+        c = np.array([vx, vy, yaw], dtype=np.float32)
+        self.cmd = np.clip(c, -self.CMD_LIMITS, self.CMD_LIMITS)
 
     def _build_obs(self, hm, est_quat, est_omega) -> np.ndarray:
         d = hm.data

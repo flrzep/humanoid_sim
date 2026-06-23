@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>IMU_Sim — Humanoid Balancing (WASM render)</title>
+<title>P3 Humanoid Sim</title>
 <style>
   :root { --bg:#0f1419; --panel:#1a2230; --line:#2b3647; --fg:#e6edf3; --muted:#8b98a9;
           --accent:#4ea1ff; --good:#3fb950; --bad:#f85149;
@@ -15,38 +15,33 @@
   header h1 { margin:0; font-size:18px; font-weight:600; }
   header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
   .wrap { display:flex; gap:20px; padding:20px; flex-wrap:wrap; align-items:flex-start; }
-  .stage { flex:1 1 360px; min-width:300px; position:relative; }
+  .stage { flex:1 1 440px; min-width:300px; position:relative; }
   .view { width:100%; aspect-ratio:4/3; max-height:82vh; display:block;
           border:1px solid var(--line); border-radius:8px; background:#000; }
-  #canvas { width:100%; height:100%; display:block; border-radius:8px; }
+  #canvas { width:100%; height:100%; display:block; border-radius:8px; cursor:grab; }
   #overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
              background:rgba(15,20,25,.82); border-radius:8px; color:var(--muted); font-size:13px;
              text-align:center; padding:20px; }
   .hint { color:var(--muted); font-size:12px; margin-top:6px; }
-  .side { flex:0 0 300px; display:flex; flex-direction:column; gap:16px; }
+  .side { flex:1 1 360px; min-width:300px; display:flex; flex-direction:column; gap:16px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px; }
   .card h2 { margin:0 0 10px; font-size:12px; text-transform:uppercase; letter-spacing:.06em;
              color:var(--muted); font-weight:600; }
   label { display:block; font-size:12px; color:var(--muted); margin:8px 0 4px; }
-  select, button, input[type=range] { width:100%; }
-  select, button { background:#243044; color:var(--fg); border:1px solid var(--line);
+  select, button { width:100%; background:#243044; color:var(--fg); border:1px solid var(--line);
                    border-radius:6px; padding:8px 10px; font-size:14px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   button.primary { background:var(--accent); color:#05101f; border-color:var(--accent); font-weight:600; }
-  .pad { display:grid; grid-template-columns:repeat(3,1fr); gap:6px; margin-top:6px; }
-  .pad button { padding:10px 0; }
-  .pad .sp { visibility:hidden; }
   .row { display:flex; justify-content:space-between; padding:3px 0; }
   .row .k { color:var(--muted); }
   .row .v { font-variant-numeric:tabular-nums; font-weight:600; }
   .status { font-weight:700; }
   .status.balancing { color:var(--good); }
   .status.fallen, .status.off { color:var(--bad); }
-  .mag { display:flex; align-items:center; gap:8px; }
-  .mag input { flex:1; }
-  .mag .val { width:54px; text-align:right; font-variant-numeric:tabular-nums; }
+  .keys { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px; color:var(--muted); }
+  .keys kbd { background:#243044; border:1px solid var(--line); border-radius:4px; padding:1px 6px;
+              font:inherit; font-size:11px; color:var(--fg); }
   .tag { font-size:11px; color:var(--muted); }
-  .charts { flex:1 1 360px; min-width:300px; display:flex; flex-direction:column; gap:14px; }
   .chart-bar { display:flex; align-items:center; gap:12px; color:var(--muted); font-size:12px; }
   .chart-bar select { width:auto; padding:5px 9px; font-size:13px; }
   .chart-bar .winlbl { margin-left:auto; }
@@ -58,7 +53,7 @@
                      font-variant-numeric:tabular-nums; }
   .chart-head .leg i { width:12px; height:3px; border-radius:2px; display:inline-block; }
   .chart-head .leg b { color:var(--muted); min-width:46px; text-align:right; font-weight:600; }
-  .chart canvas { width:100%; height:150px; display:block; }
+  .chart canvas { width:100%; height:140px; display:block; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -71,44 +66,14 @@
 <body>
 <header>
   <h1>P3 Humanoid Sim</h1>
-  <p></p>
+  <p>Drive the robot with <b>WASD</b>, grab and shove it with the mouse, swap IMU/policy live.</p>
 </header>
 
 <div class="wrap">
   <div class="stage">
     <div class="view"><canvas id="canvas"></canvas></div>
     <div id="overlay">Starting…</div>
-    <div class="hint">Drag to orbit, scroll to zoom. <b>Shift-click</b> the robot to shove it — or use the buttons.</div>
-  </div>
-
-  <div class="charts">
-      <div class="chart-bar">
-        <span>Axis</span>
-        <select id="axis">
-          <option value="1">Pitch (fore / aft)</option>
-          <option value="0">Roll (lateral)</option>
-        </select>
-        <span class="winlbl">rolling last <span id="winlbl">12</span> s</span>
-      </div>
-
-      <div class="chart">
-        <div class="chart-head">
-          <span class="ttl" id="tilt_ttl">Attitude — pitch (°)</span>
-          <span class="leg"><i style="background:var(--truth)"></i>true <b id="lg_t_t">—</b></span>
-          <span class="leg"><i style="background:var(--meas)"></i>estimate <b id="lg_t_e">—</b></span>
-        </div>
-        <canvas id="chart_tilt"></canvas>
-      </div>
-
-      <div class="chart">
-        <div class="chart-head">
-          <span class="ttl" id="gyro_ttl">Gyro — pitch rate (rad/s)</span>
-          <span class="leg"><i style="background:var(--truth)"></i>true <b id="lg_g_t">—</b></span>
-          <span class="leg"><i style="background:var(--meas)"></i>IMU <b id="lg_g_i">—</b></span>
-        </div>
-        <canvas id="chart_gyro"></canvas>
-      </div>
-    </div>
+    <div class="hint"><b>WASD</b> to walk · <b>drag the robot</b> to shove it · drag empty space to orbit · scroll to zoom · <b>R</b> to reset</div>
   </div>
 
   <div class="side">
@@ -116,6 +81,8 @@
       <h2>Setup</h2>
       <label for="robot">Robot</label>
       <select id="robot"></select>
+      <label for="policy">Policy</label>
+      <select id="policy"></select>
       <label for="imu">IMU model</label>
       <select id="imu"></select>
       <div style="height:10px"></div>
@@ -123,17 +90,13 @@
     </div>
 
     <div class="card">
-      <h2>Disturbance</h2>
-      <div class="mag">
-        <input id="mag" type="range" min="20" max="400" step="10" value="150"/>
-        <span class="val"><span id="magval">150</span> N</span>
-      </div>
-      <div class="pad">
-        <span class="sp"></span><button data-fx="1"  data-fy="0">▲ fwd</button><span class="sp"></span>
-        <button data-fx="0" data-fy="1">◀ left</button>
-        <button id="rand">random</button>
-        <button data-fx="0" data-fy="-1">right ▶</button>
-        <span class="sp"></span><button data-fx="-1" data-fy="0">▼ back</button><span class="sp"></span>
+      <h2>Controls</h2>
+      <div class="keys">
+        <span><kbd>W</kbd><kbd>S</kbd></span><span>walk forward / back</span>
+        <span><kbd>A</kbd><kbd>D</kbd></span><span>turn left / right</span>
+        <span><kbd>Q</kbd><kbd>E</kbd></span><span>strafe left / right</span>
+        <span>drag robot</span><span>shove (longer drag = harder)</span>
+        <span>drag space</span><span>orbit camera</span>
       </div>
     </div>
 
@@ -141,10 +104,38 @@
       <h2>Status</h2>
       <div class="row"><span class="k">State</span><span id="t_status" class="v status">—</span></div>
       <div class="row"><span class="k">Time</span><span id="t_time" class="v">—</span></div>
+      <div class="row"><span class="k">Command</span><span id="t_cmd" class="v">0, 0, 0</span></div>
       <div class="row"><span class="k">IMU temp.</span><span id="t_temp" class="v">—</span></div>
       <div class="row"><span class="k">Tilt est. error</span><span id="t_err" class="v">—</span></div>
       <div class="row"><span class="k">‖IMU − true‖ gyro</span><span id="g_err" class="v">—</span></div>
       <div class="row"><span class="k">‖IMU − true‖ accel</span><span id="a_err" class="v">—</span></div>
+    </div>
+
+    <div class="chart-bar">
+      <span>Axis</span>
+      <select id="axis">
+        <option value="1">Pitch (fore / aft)</option>
+        <option value="0">Roll (lateral)</option>
+      </select>
+      <span class="winlbl">rolling last <span id="winlbl">12</span> s</span>
+    </div>
+
+    <div class="chart">
+      <div class="chart-head">
+        <span class="ttl" id="tilt_ttl">Attitude — pitch (°)</span>
+        <span class="leg"><i style="background:var(--truth)"></i>true <b id="lg_t_t">—</b></span>
+        <span class="leg"><i style="background:var(--meas)"></i>estimate <b id="lg_t_e">—</b></span>
+      </div>
+      <canvas id="chart_tilt"></canvas>
+    </div>
+
+    <div class="chart">
+      <div class="chart-head">
+        <span class="ttl" id="gyro_ttl">Gyro — pitch rate (rad/s)</span>
+        <span class="leg"><i style="background:var(--truth)"></i>true <b id="lg_g_t">—</b></span>
+        <span class="leg"><i style="background:var(--meas)"></i>IMU <b id="lg_g_i">—</b></span>
+      </div>
+      <canvas id="chart_gyro"></canvas>
     </div>
   </div>
 </div>
