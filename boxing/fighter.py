@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 from imu_sim.control.policy import gravity_orientation
-from .arena import Fighter, PUNCH_ANGLE
+from .arena import Fighter, SHOULDER_PUNCH_ANGLE, ELBOW_PUNCH_ANGLE
 
 # A punch = swing the shoulder forward (arm servo) + a short committed lunge.
 PUNCH_DURATION = 0.35      # seconds the arm stays extended / the lunge is held
@@ -122,9 +122,12 @@ class FighterController:
         dqj = data.qvel[f.leg_v]
         data.ctrl[f.leg_c] = (self.target - qj) * self.kps - dqj * self.kds
 
-        # Arms: position servo. Resting at 0; the punching side extends while the
-        # punch is active, then the servo snaps it back.
-        arm = [0.0, 0.0]
+        # Arms: position servos, f.arm_c = [L_shoulder, L_elbow, R_shoulder, R_elbow].
+        # At rest all 0; the punching side drives shoulder + elbow forward so the
+        # forearm snaps out, then the servos pull it back.
+        arm = [0.0, 0.0, 0.0, 0.0]
         if self.punch_steps > 0:
-            arm[0 if self.punch_side > 0 else 1] = PUNCH_ANGLE
+            base = 0 if self.punch_side > 0 else 2
+            arm[base] = SHOULDER_PUNCH_ANGLE
+            arm[base + 1] = ELBOW_PUNCH_ANGLE
         data.ctrl[f.arm_c] = arm

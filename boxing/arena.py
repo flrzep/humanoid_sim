@@ -30,63 +30,89 @@ LEG_JOINTS = [
     "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint",
     "right_knee_joint", "right_ankle_pitch_joint", "right_ankle_roll_joint",
 ]
-ARM_JOINTS = ["left_shoulder_punch", "right_shoulder_punch"]   # added by articulate_arms
+# Arm joints added by articulate_arms, in actuator order (left arm, then right arm).
+ARM_JOINTS = ["left_shoulder_punch", "left_elbow_punch",
+              "right_shoulder_punch", "right_elbow_punch"]
 
 DEFAULT_ANGLES = np.array([-0.1, 0.0, 0.0, 0.3, -0.2, 0.0,
                            -0.1, 0.0, 0.0, 0.3, -0.2, 0.0], dtype=np.float64)
 STAND_HEIGHT = 0.793
 START_X = 0.7
 
-# Arm articulation: shoulder pivot (in pelvis frame), servo gains, punch reach.
-SHOULDER = (0.0, 0.10, 0.292)     # (x, |y|, z)
-ARM_KP, ARM_KD = 80.0, 4.0
-ARM_RANGE = (-2.0, 0.4)           # rad; negative = swung forward (punch)
-PUNCH_ANGLE = -1.3                # target shoulder angle at full extension
+# --- Arm articulation tunables (tweak these to change how a punch looks/reaches) ---
+SHOULDER = (0.0, 0.10, 0.292)      # shoulder pivot in pelvis frame (x, |y|, z)
+ELBOW = (0.0158, 0.1468, 0.1052)   # elbow pivot in pelvis frame (x, |y|, z)
+ARM_KP, ARM_KD = 80.0, 4.0         # position-servo gains for both arm joints
+ARM_RANGE = (-2.4, 0.4)            # rad joint limits; negative = swung forward
+SHOULDER_PUNCH_ANGLE = -1.3        # shoulder target at full extension
+ELBOW_PUNCH_ANGLE = -1.1           # elbow target at full extension (forearm snap)
+# Geoms (by mesh name) that belong to the forearm; everything else on that side is
+# upper arm. The glove lives on the forearm so the elbow extension carries it forward.
+_FOREARM_MESHES = {"left": {"left_elbow_link", "glove_l"},
+                   "right": {"right_elbow_link", "glove_r"}}
+
+
+def _add_servo(spec, name):
+    act = spec.add_actuator(name=name)
+    act.trntype = mujoco.mjtTrn.mjTRN_JOINT
+    act.target = name
+    act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
+    act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
+    act.gainprm = [ARM_KP] + [0.0] * 9
+    act.biasprm = [0.0, -ARM_KP, -ARM_KD] + [0.0] * 7
+    act.ctrllimited = 1
+    act.ctrlrange = list(ARM_RANGE)
+
+
+def _move_geom(g, body, pivot, spec):
+    ng = body.add_geom()
+    ng.type, ng.size, ng.quat, ng.rgba = g.type, g.size, g.quat, g.rgba
+    ng.group, ng.contype, ng.conaffinity, ng.condim = g.group, g.contype, g.conaffinity, g.condim
+    ng.pos = (np.array(g.pos) - pivot).tolist()
+    ng.density = 0.0               # mass comes from each body's explicit inertial
+    if g.type == mujoco.mjtGeom.mjGEOM_MESH:
+        ng.meshname = g.meshname
+    spec.delete(g)
 
 
 def articulate_arms(spec: mujoco.MjSpec) -> None:
-    """Split each rigid arm into a hinged body with a position-servo actuator."""
+    """Split each rigid arm into a hinged upper arm + forearm (shoulder + elbow).
+
+    Both joints are stiff position servos so the arm is near-rigid at rest (the policy
+    barely notices); a punch drives the shoulder *and* elbow forward so the forearm
+    snaps out, giving the glove extra reach and forward momentum.
+    """
     pelvis = spec.body("pelvis")
     for side, sgn in (("left", 1.0), ("right", -1.0)):
-        pivot = np.array([SHOULDER[0], sgn * SHOULDER[1], SHOULDER[2]])
-        arm = pelvis.add_body(name=f"{side}_arm", pos=pivot.tolist())
-        # Explicit inertial so the body has mass even though the visual geoms are
-        # density 0; CoM out along the arm. Kept light + stiff so it behaves almost
-        # rigidly at rest (the policy barely notices) but can swing for a punch.
-        arm.explicitinertial = True
-        arm.mass = 1.6
-        arm.ipos = [0.06, 0.0, -0.10]
-        arm.inertia = [0.02, 0.02, 0.008]
-        arm.add_joint(name=f"{side}_shoulder_punch", type=mujoco.mjtJoint.mjJNT_HINGE,
-                      axis=[0, 1, 0], range=list(ARM_RANGE))
+        shoulder = np.array([SHOULDER[0], sgn * SHOULDER[1], SHOULDER[2]])
+        elbow = np.array([ELBOW[0], sgn * ELBOW[1], ELBOW[2]])
 
-        # Move this side's geoms (|y| beyond the torso) onto the arm body.
-        movers = [g for g in pelvis.geoms if g.pos[1] * sgn > 0.08]
-        for g in movers:
-            ng = arm.add_geom()
-            ng.type = g.type
-            ng.size = g.size
-            ng.pos = (np.array(g.pos) - pivot).tolist()
-            ng.quat = g.quat
-            ng.rgba = g.rgba
-            ng.group = g.group
-            ng.contype = g.contype
-            ng.conaffinity = g.conaffinity
-            ng.condim = g.condim
-            ng.density = 0.0          # mass comes from the explicit inertial above
-            if g.type == mujoco.mjtGeom.mjGEOM_MESH:
-                ng.meshname = g.meshname
-            spec.delete(g)
+        upper = pelvis.add_body(name=f"{side}_arm", pos=shoulder.tolist())
+        upper.explicitinertial = True
+        upper.mass = 1.0
+        upper.ipos = [0.0, 0.0, -0.09]
+        upper.inertia = [0.012, 0.012, 0.005]
+        upper.add_joint(name=f"{side}_shoulder_punch", type=mujoco.mjtJoint.mjJNT_HINGE,
+                        axis=[0, 1, 0], range=list(ARM_RANGE))
 
-        act = spec.add_actuator(name=f"{side}_shoulder_punch")
-        act.trntype = mujoco.mjtTrn.mjTRN_JOINT
-        act.target = f"{side}_shoulder_punch"
-        act.gaintype = mujoco.mjtGain.mjGAIN_FIXED
-        act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
-        act.gainprm = [ARM_KP] + [0.0] * 9
-        act.biasprm = [0.0, -ARM_KP, -ARM_KD] + [0.0] * 7
-        act.ctrllimited = 1
-        act.ctrlrange = list(ARM_RANGE)
+        fore = upper.add_body(name=f"{side}_forearm", pos=(elbow - shoulder).tolist())
+        fore.explicitinertial = True
+        fore.mass = 0.7
+        fore.ipos = [0.07, 0.0, -0.03]
+        fore.inertia = [0.006, 0.006, 0.003]
+        fore.add_joint(name=f"{side}_elbow_punch", type=mujoco.mjtJoint.mjJNT_HINGE,
+                       axis=[0, 1, 0], range=list(ARM_RANGE))
+
+        for g in [g for g in pelvis.geoms if g.pos[1] * sgn > 0.08]:
+            on_forearm = (g.type == mujoco.mjtGeom.mjGEOM_MESH
+                          and g.meshname in _FOREARM_MESHES[side])
+            if on_forearm:
+                _move_geom(g, fore, elbow, spec)
+            else:
+                _move_geom(g, upper, shoulder, spec)
+
+        _add_servo(spec, f"{side}_shoulder_punch")
+        _add_servo(spec, f"{side}_elbow_punch")
 
 
 @dataclass

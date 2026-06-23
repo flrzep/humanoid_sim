@@ -45,14 +45,16 @@ class GameSim:
         self._strike = []   # per fighter: {+1: left-arm geoms, -1: right-arm geoms}
         self._victim = []   # per fighter: all of that robot's geoms
         for f in self.arena.fighters:
-            larm, rarm = body(f.prefix + "left_arm"), body(f.prefix + "right_arm")
+            # Each arm strikes with its upper arm + forearm (the forearm holds the glove).
+            lbodies = {body(f.prefix + "left_arm"), body(f.prefix + "left_forearm")}
+            rbodies = {body(f.prefix + "right_arm"), body(f.prefix + "right_forearm")}
             left, right, allg = set(), set(), set()
             for gi in range(m.ngeom):
                 b = int(m.geom_bodyid[gi])
                 bn = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
-                if b == larm:
+                if b in lbodies:
                     left.add(gi)
-                if b == rarm:
+                if b in rbodies:
                     right.add(gi)
                 if bn.startswith(f.prefix):
                     allg.add(gi)
