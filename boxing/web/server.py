@@ -6,6 +6,7 @@ Endpoints:
     GET  /boxing_app.js
     GET  /model/manifest        {scene, files}
     GET  /model/file?path=       arena.xml or a mesh (bytes)
+    GET  /meta                   {gloves: {"0": [...geom ids], "1": [...]}}
     GET  /poses                  SSE: {qpos, tel} at the frame rate
     POST /command                move | punch | reset
 """
@@ -17,6 +18,8 @@ import time
 import xml.etree.ElementTree as ET
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+import mujoco
 
 from ..arena import ROBOT_XML
 from ..game import GameSim
@@ -87,6 +90,27 @@ class BoxingWorker(threading.Thread):
             time.sleep(0.001)
 
 
+def _glove_geoms(model) -> dict:
+    """Geom ids of each fighter's gloves, keyed by player index ("0"/"1").
+
+    The gloves are mesh geoms whose mesh name contains "glove" (the attach prefix
+    ``r1_``/``r2_`` tells us which fighter). The browser tints these per-player and
+    leaves every other geom its original colour.
+    """
+    out = {"0": [], "1": []}
+    for gi in range(model.ngeom):
+        did = int(model.geom_dataid[gi])
+        if did < 0:
+            continue
+        mesh = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, did) or ""
+        if "glove" not in mesh.lower():
+            continue
+        body = int(model.geom_bodyid[gi])
+        bname = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) or ""
+        out["0" if bname.startswith("r1_") else "1"].append(gi)
+    return out
+
+
 def _resolve_meshes(xml: str) -> dict:
     """Map each mesh file name referenced by the XML to a real file on disk.
 
@@ -109,6 +133,7 @@ class Handler(BaseHTTPRequestHandler):
     worker: BoxingWorker = None
     arena_xml: str = ""
     meshes: dict = {}
+    meta: dict = {}
 
     def log_message(self, *a):
         pass
@@ -131,6 +156,8 @@ class Handler(BaseHTTPRequestHandler):
             self._bytes((HERE / "boxing_app.js").read_bytes(), "text/javascript; charset=utf-8")
         elif path == "/model/manifest":
             self._json({"scene": "arena.xml", "files": ["arena.xml"] + sorted(self.meshes)})
+        elif path == "/meta":
+            self._json(self.meta)
         elif path == "/model/file":
             self._model_file()
         elif path == "/poses":
@@ -182,6 +209,7 @@ def serve(host="127.0.0.1", port=8002, fps=50) -> None:
     Handler.worker = worker
     Handler.arena_xml = worker.game.arena.spec.to_xml()
     Handler.meshes = _resolve_meshes(Handler.arena_xml)
+    Handler.meta = {"gloves": _glove_geoms(worker.game.arena.model)}
     worker.start()
     httpd = ThreadingHTTPServer((host, port), Handler)
     print(f"Boxing game at http://{host}:{port}/  (Ctrl+C to stop)")

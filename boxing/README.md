@@ -17,9 +17,15 @@ python scripts/boxing_demo.py --no-browser --port 8080
 Physics + policies run in Python; the browser compiles the combined two-robot model in
 MuJoCo-WASM and renders it (first load fetches three.js + `mujoco-js` from a CDN).
 
+The fighters keep the G1's original colours; each player's **gloves** are tinted so you
+can tell them apart (Player 1 blue, Player 2 red). The view fills the window. A
+**Controls** button (top-left) opens a modal with the full control scheme and a live
+overview of which input device each player is using — it also opens automatically on load
+as the start screen.
+
 ## Controls
 
-| | Player 1 (blue) | Player 2 (orange) |
+| | Player 1 (blue gloves) | Player 2 (red gloves) |
 |---|---|---|
 | Move / turn | `W A S D` | arrow keys |
 | Strafe | `Q` `E` | `,` `.` |
@@ -28,7 +34,8 @@ MuJoCo-WASM and renders it (first load fetches three.js + `mujoco-js` from a CDN
 
 **PS4 controllers** (connect over Bluetooth, then press a button so the browser sees it):
 gamepad *i* drives player *i* — left stick moves, right stick turns, **L1 / R1** (or
-Square / Circle) punch left / right, **Options** rematches.
+Square / Circle) punch left / right, **Options** rematches. The Controls modal shows a
+green dot per player when their gamepad is detected.
 
 ## How a punch works
 

@@ -3,39 +3,68 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>G1 Boxing</title>
+<link href="https://googleapis.com" rel="stylesheet">
+<title>Humanoid Boxing</title>
 <style>
   :root { --bg:#0f1419; --panel:#1a2230; --line:#2b3647; --fg:#e6edf3; --muted:#8b98a9;
-          --accent:#4ea1ff; --p1:#4ea1ff; --p2:#f0883e; --good:#3fb950; --bad:#f85149; }
+          --accent:#4ea1ff; --p1:#4ea1ff; --p2:#f85149; --good:#3fb950; --bad:#f85149; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg);
-         font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif; }
-  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex;
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--fg); overflow:hidden;
+         font:14px/1.5 system-ui,Segoe UI,Roboto,sans-serif;
+         font-family:'Montserrat',sans-serif;
+         display:flex; flex-direction:column; }
+  header { flex:none; padding:10px 20px; border-bottom:1px solid var(--line); display:flex;
            align-items:center; gap:16px; }
   header h1 { margin:0; font-size:18px; font-weight:700; letter-spacing:.04em; }
   .score { margin-left:auto; display:flex; gap:18px; align-items:center; font-weight:700; }
   .score .p1 { color:var(--p1); } .score .p2 { color:var(--p2); }
-  .wrap { padding:18px; max-width:1100px; margin:0 auto; }
-  .stage { position:relative; }
-  .view { width:100%; aspect-ratio:16/9; max-height:78vh; display:block;
-          border:1px solid var(--line); border-radius:10px; background:#000; }
-  #canvas { width:100%; height:100%; display:block; border-radius:10px; }
+  .btn { background:var(--accent); color:#05101f; border:none; border-radius:8px;
+         padding:8px 16px; font:inherit; font-weight:700; cursor:pointer; }
+  .btn.ghost { background:transparent; color:var(--fg); border:1px solid var(--line); }
+
+  /* Stage fills the whole remaining viewport. */
+  .stage { position:relative; flex:1 1 auto; min-height:0; }
+  #canvas { width:100%; height:100%; display:block; background:#000; }
   .overlay { position:absolute; inset:0; display:flex; flex-direction:column; gap:14px;
-             align-items:center; justify-content:center; border-radius:10px;
-             background:rgba(10,14,20,.78); text-align:center; }
+             align-items:center; justify-content:center; background:rgba(10,14,20,.78);
+             text-align:center; }
   .overlay.hidden { display:none; }
-  .overlay .big { font-size:42px; font-weight:800; letter-spacing:.02em; }
-  .overlay button { background:var(--accent); color:#05101f; border:none; border-radius:8px;
-                    padding:12px 22px; font-size:16px; font-weight:700; cursor:pointer; }
-  .pads { display:flex; gap:14px; margin-top:14px; flex-wrap:wrap; }
-  .pad { flex:1 1 320px; background:var(--panel); border:1px solid var(--line);
-         border-radius:8px; padding:12px 14px; }
+  .overlay .big { font-size:46px; font-weight:800; letter-spacing:.02em; }
+
+  /* Controls / start modal. */
+  .modal { position:fixed; inset:0; z-index:20; display:flex; align-items:center;
+           justify-content:center; background:rgba(6,9,14,.82); padding:20px; }
+  .modal.hidden { display:none; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:14px;
+          padding:22px 26px; max-width:760px; width:100%; box-shadow:0 18px 60px rgba(0,0,0,.5); }
+  .card h2 { margin:0 0 4px; font-size:22px; letter-spacing:.04em; }
+  .card .sub { color:var(--muted); margin:0 0 16px; font-size:13px; }
+
+  .devices { display:flex; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+  .dev { flex:1 1 220px; display:flex; align-items:center; gap:10px; background:#141c28;
+         border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  .dev.p1 { border-left:3px solid var(--p1); } .dev.p2 { border-left:3px solid var(--p2); }
+  .dev .who { font-weight:700; } .dev.p1 .who { color:var(--p1); } .dev.p2 .who { color:var(--p2); }
+  .dev .src { margin-left:auto; color:var(--muted); font-size:12px; font-weight:600; }
+  .dot { width:10px; height:10px; border-radius:50%; background:#3a475a; flex:none;
+         box-shadow:0 0 0 0 rgba(63,185,80,0); transition:background .2s; }
+  .dot.on { background:var(--good); box-shadow:0 0 8px 1px rgba(63,185,80,.6); }
+
+  .hint { color:var(--muted); font-size:12.5px; background:#141c28; border:1px solid var(--line);
+          border-radius:8px; padding:10px 12px; margin:0 0 16px; }
+  .hint b { color:var(--fg); }
+
+  .pads { display:flex; gap:14px; flex-wrap:wrap; }
+  .pad { flex:1 1 300px; background:#141c28; border:1px solid var(--line); border-radius:8px;
+         padding:12px 14px; }
   .pad h3 { margin:0 0 8px; font-size:13px; }
   .pad.p1 h3 { color:var(--p1); } .pad.p2 h3 { color:var(--p2); }
-  .pad .conn { font-size:11px; color:var(--muted); font-weight:600; }
-  .keys { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; font-size:12px; color:var(--muted); }
+  .keys { display:grid; grid-template-columns:auto 1fr; gap:4px 10px; font-size:12px; color:var(--muted); }
   .keys kbd { background:#243044; border:1px solid var(--line); border-radius:4px; padding:1px 6px;
               font:inherit; font-size:11px; color:var(--fg); }
+  .card .actions { display:flex; justify-content:flex-end; margin-top:18px; }
+  .card .actions .btn { padding:11px 28px; font-size:15px; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -47,7 +76,8 @@
 </head>
 <body>
 <header>
-  <h1>🥊 G1 BOXING</h1>
+  <h1>Humanoid Boxing</h1>
+  <button id="help-open" class="btn ghost">Controls</button>
   <div class="score">
     <span class="p1">P1 <span id="w1">0</span></span>
     <span id="round" class="tag">Round 1</span>
@@ -55,35 +85,54 @@
   </div>
 </header>
 
-<div class="wrap">
-  <div class="stage">
-    <div class="view"><canvas id="canvas"></canvas></div>
-    <div id="overlay" class="overlay"><div id="ovmsg">Loading…</div></div>
-    <div id="ko" class="overlay hidden">
-      <div class="big" id="kotext">KO</div>
-      <button id="restart">Rematch (Enter)</button>
-    </div>
+<div class="stage">
+  <canvas id="canvas"></canvas>
+  <div id="overlay" class="overlay"><div id="ovmsg">Loading…</div></div>
+  <div id="ko" class="overlay hidden">
+    <div class="big" id="kotext">KO</div>
+    <button id="restart" class="btn">Rematch (Enter)</button>
   </div>
+</div>
 
-  <div class="pads">
-    <div class="pad p1">
-      <h3>Player 1 <span class="conn" id="c1">— keyboard</span></h3>
-      <div class="keys">
-        <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>move / turn</span>
-        <span><kbd>Q</kbd><kbd>E</kbd></span><span>strafe</span>
-        <span><kbd>F</kbd> / <kbd>G</kbd></span><span>punch left / right</span>
-        <span>gamepad</span><span>left stick move · L1/R1 punch</span>
+<!-- Controls / start modal -->
+<div id="help" class="modal hidden">
+  <div class="card">
+    <h2>Humanoid Boxing</h2>
+    <p class="sub">Knock the other fighter down to win the round. Gloves are coloured per player.</p>
+
+    <div class="devices">
+      <div class="dev p1"><span class="dot" id="dot1"></span>
+        <span class="who">Player 1</span><span class="src" id="dev1">keyboard</span></div>
+      <div class="dev p2"><span class="dot" id="dot2"></span>
+        <span class="who">Player 2</span><span class="src" id="dev2">keyboard</span></div>
+    </div>
+
+    <p class="hint">Connect a PS4 controller over <b>Bluetooth</b>, then press any button so the
+      browser registers it. Gamepad <b>1</b> → Player 1, gamepad <b>2</b> → Player 2. The dots
+      above turn green when a controller is detected.</p>
+
+    <div class="pads">
+      <div class="pad p1">
+        <h3>Player 1</h3>
+        <div class="keys">
+          <span><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>move / turn</span>
+          <span><kbd>Q</kbd><kbd>E</kbd></span><span>strafe</span>
+          <span><kbd>F</kbd> / <kbd>G</kbd></span><span>punch left / right</span>
+          <span>gamepad</span><span>left stick move · right stick turn · L1/R1 punch</span>
+        </div>
+      </div>
+      <div class="pad p2">
+        <h3>Player 2</h3>
+        <div class="keys">
+          <span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span><span>move / turn</span>
+          <span><kbd>,</kbd> / <kbd>.</kbd></span><span>strafe</span>
+          <span><kbd>K</kbd> / <kbd>L</kbd></span><span>punch left / right</span>
+          <span>gamepad 2</span><span>left stick move · right stick turn · L1/R1 punch</span>
+        </div>
       </div>
     </div>
-    <div class="pad p2">
-      <h3>Player 2 <span class="conn" id="c2">— gamepad needed</span></h3>
-      <div class="keys">
-        <span><kbd>↑</kbd><kbd>←</kbd><kbd>↓</kbd><kbd>→</kbd></span><span>move / turn</span>
-        <span><kbd>,</kbd> / <kbd>.</kbd></span><span>strafe</span>
-        <span><kbd>K</kbd> / <kbd>L</kbd></span><span>punch left / right</span>
-        <span>gamepad 2</span><span>left stick move · L1/R1 punch</span>
-      </div>
-    </div>
+
+    <div class="actions"><button id="startbtn" class="btn">Start</button></div>
   </div>
 </div>
 

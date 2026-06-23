@@ -16,6 +16,9 @@ let mujoco, model, data;
 let scene, camera, renderer, controls;
 let geomMeshes = [];
 let wins = [0, 0], lastStatus = 'fighting', round = 1;
+const gloveSet = [new Set(), new Set()];   // geom ids of each player's gloves
+const GLOVE_COLOR = [new THREE.Color(0.31, 0.63, 1.0),   // P1 blue
+                     new THREE.Color(0.97, 0.32, 0.29)]; // P2 red
 
 const MOVE = [0.8, 0.4, 0.8];              // vx, vy(strafe), yaw scales
 const lastSent = [null, null];             // last move command per player
@@ -94,13 +97,16 @@ function makeMeshGeometry(g) {
   geo.computeVertexNormals();
   return geo;
 }
-function geomTint(g) {
-  // Tint each fighter so they're distinguishable: r1 -> blue, r2 -> orange.
-  // World body is 0; the two identical robots split the remaining bodies evenly.
-  const body = model.geom_bodyid[g];
-  const perRobot = (model.nbody - 1) / 2;
-  if (body >= 1 && body <= perRobot) return new THREE.Color(0.30, 0.55, 1.0);
-  if (body > perRobot) return new THREE.Color(0.96, 0.53, 0.22);
+function geomColor(g) {
+  // Gloves are tinted per player (P1 blue, P2 red); everything else keeps the
+  // model's original colour (its material, or its geom rgba as a fallback).
+  if (gloveSet[0].has(g)) return GLOVE_COLOR[0];
+  if (gloveSet[1].has(g)) return GLOVE_COLOR[1];
+  const mid = model.geom_matid ? model.geom_matid[g] : -1;
+  if (mid >= 0 && model.mat_rgba)
+    return new THREE.Color(model.mat_rgba[mid * 4], model.mat_rgba[mid * 4 + 1], model.mat_rgba[mid * 4 + 2]);
+  if (model.geom_rgba)
+    return new THREE.Color(model.geom_rgba[g * 4], model.geom_rgba[g * 4 + 1], model.geom_rgba[g * 4 + 2]);
   return new THREE.Color(0.7, 0.7, 0.74);
 }
 function buildScene() {
@@ -110,7 +116,7 @@ function buildScene() {
     if (HIDDEN_GROUPS.has(model.geom_group[g])) continue;
     const geo = makeGeometry(g);
     if (!geo) continue;
-    const mat = new THREE.MeshStandardMaterial({ color: geomTint(g), metalness: 0.15, roughness: 0.7 });
+    const mat = new THREE.MeshStandardMaterial({ color: geomColor(g), metalness: 0.15, roughness: 0.7 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.matrixAutoUpdate = false;
     scene.add(mesh);
@@ -147,6 +153,11 @@ async function loadModel() {
   model = mujoco.MjModel.loadFromXML('/work/' + man.scene);
   data = new mujoco.MjData(model);
   mujoco.mj_forward(model, data);
+  try {
+    const meta = await (await fetch('/meta')).json();
+    gloveSet[0] = new Set(meta.gloves['0'] || []);
+    gloveSet[1] = new Set(meta.gloves['1'] || []);
+  } catch (e) { /* gloves stay default-coloured */ }
   buildScene();
   overlay('');
 }
@@ -234,7 +245,9 @@ function pollGamepads() {
   const pads = navigator.getGamepads ? navigator.getGamepads() : [];
   for (let p = 0; p < 2; p++) {
     const gp = pads[p];
-    $('#c' + (p + 1)).textContent = gp ? '— gamepad ✓' : (p === 0 ? '— keyboard' : '— keyboard / gamepad');
+    const dot = $('#dot' + (p + 1)), dev = $('#dev' + (p + 1));
+    if (dot) dot.classList.toggle('on', !!gp);
+    if (dev) dev.textContent = gp ? (gp.id ? gp.id.replace(/\s*\(.*\)$/, '') : 'gamepad') + ' ✓' : 'keyboard';
     if (!gp) continue;
     const dz = (v) => (Math.abs(v) < DZ ? 0 : v);
     const lx = dz(gp.axes[0] || 0), ly = dz(gp.axes[1] || 0), rx = dz(gp.axes[2] || 0);
@@ -249,12 +262,18 @@ function pollGamepads() {
   }
 }
 
+// ---------------------------------------------------------------- help modal
+function showHelp(on) { $('#help').classList.toggle('hidden', !on); }
+
 // ---------------------------------------------------------------- boot
 async function main() {
   initThree();
   animate();
   initKeyboard();
   $('#restart').onclick = rematch;
+  $('#help-open').onclick = () => showHelp(true);
+  $('#startbtn').onclick = () => showHelp(false);
+  showHelp(true);                     // open the controls/start screen first
   overlay('Loading MuJoCo WASM…');
   mujoco = await loadMujoco();
   mujoco.FS.mkdir('/work');
