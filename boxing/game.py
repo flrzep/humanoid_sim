@@ -14,8 +14,10 @@ from .arena import build_arena
 from .fighter import FighterController, load_policy
 
 KO_HEIGHT = 0.45          # base height (m) below which a fighter is "down"
-HIT_RANGE = 0.78          # max fighter separation (m) for a punch to connect
-HIT_FORCE = 2200.0        # knockback force on a clean hit (N) — tuned for a 1-punch KO
+# A punch lands only on real glove->opponent contact (see _resolve_punches). The arm
+# swing itself shoves ~350 N, which the policy shrugs off, so a landed glove also deals
+# a knockback impulse — the "damage". Set HIT_FORCE = 0 for pure-physics shoving (no KO).
+HIT_FORCE = 1800.0        # knockback force on a clean glove contact (N) — ~1-punch KO
 HIT_LIFT = 400.0          # upward component (N)
 HIT_STEPS = 18            # steps the knockback impulse is applied (~0.036 s)
 
@@ -32,7 +34,30 @@ class GameSim:
             policy, torch_mod = load_policy(self.cfg["path"])
             self._torch = torch_mod
             self.fighters.append(FighterController(policy, torch_mod, f, self.cfg))
+        self._build_geom_sets()
         self.reset()
+
+    def _build_geom_sets(self) -> None:
+        """Geom ids that strike (each arm) and that can be struck (whole robot)."""
+        m = self.arena.model
+        def body(name):
+            return mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, name)
+        self._strike = []   # per fighter: {+1: left-arm geoms, -1: right-arm geoms}
+        self._victim = []   # per fighter: all of that robot's geoms
+        for f in self.arena.fighters:
+            larm, rarm = body(f.prefix + "left_arm"), body(f.prefix + "right_arm")
+            left, right, allg = set(), set(), set()
+            for gi in range(m.ngeom):
+                b = int(m.geom_bodyid[gi])
+                bn = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
+                if b == larm:
+                    left.add(gi)
+                if b == rarm:
+                    right.add(gi)
+                if bn.startswith(f.prefix):
+                    allg.add(gi)
+            self._strike.append({1: left, -1: right})
+            self._victim.append(allg)
 
     def reset(self) -> None:
         self.arena.reset()
@@ -81,20 +106,37 @@ class GameSim:
         return self.telemetry()
 
     def _resolve_punches(self) -> None:
-        """A punching fighter within range lands a knockback on the opponent."""
-        a = self.arena
+        """A punch lands when the *active glove* physically contacts the opponent.
+
+        The arm swing is real physics (it already shoves the opponent ~350 N), but
+        that alone can't topple the robust policy — so a confirmed glove contact also
+        deals a knockback impulse (HIT_FORCE) as the "hit". You must actually land the
+        correct glove on the opponent, not just be near them.
+        """
+        a, d = self.arena, self.arena.data
         for i, c in enumerate(self.fighters):
             if not (c.punching and not c.landed):
                 continue
+            strike = self._strike[i][1 if c.punch_side > 0 else -1]
+            victim = self._victim[1 - i]
+            if not self._contact_between(d, strike, victim):
+                continue
             j = 1 - i
+            c.landed = True
+            self._hit[j] = True
             delta = a.base_xy(a.fighters[j]) - a.base_xy(a.fighters[i])
             dist = float(np.linalg.norm(delta))
-            if dist < HIT_RANGE:
-                c.landed = True
-                self._hit[j] = True
-                d = delta / dist if dist > 1e-6 else np.array([a.fighters[i].facing, 0.0])
-                self._impact[j] = np.array([d[0] * HIT_FORCE, d[1] * HIT_FORCE, HIT_LIFT])
-                self._impact_steps[j] = HIT_STEPS
+            dirv = delta / dist if dist > 1e-6 else np.array([a.fighters[i].facing, 0.0])
+            self._impact[j] = np.array([dirv[0] * HIT_FORCE, dirv[1] * HIT_FORCE, HIT_LIFT])
+            self._impact_steps[j] = HIT_STEPS
+
+    @staticmethod
+    def _contact_between(d, geoms_a, geoms_b) -> bool:
+        for ci in range(d.ncon):
+            g1, g2 = d.contact[ci].geom1, d.contact[ci].geom2
+            if (g1 in geoms_a and g2 in geoms_b) or (g2 in geoms_a and g1 in geoms_b):
+                return True
+        return False
 
     def telemetry(self) -> dict:
         a = self.arena
