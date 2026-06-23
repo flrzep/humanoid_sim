@@ -13,11 +13,11 @@ from imu_sim import model as M
 from .arena import build_arena
 from .fighter import FighterController, load_policy
 
-KO_HEIGHT = 0.45          # base height (m) below which a fighter is "down"
+KO_HEIGHT = 0.35          # base height (m) below which a fighter is "down"
 # A punch lands only on real glove->opponent contact (see _resolve_punches). The arm
 # swing itself shoves ~350 N, which the policy shrugs off, so a landed glove also deals
 # a knockback impulse — the "damage". Set HIT_FORCE = 0 for pure-physics shoving (no KO).
-HIT_FORCE = 1800.0        # knockback force on a clean glove contact (N) — ~1-punch KO
+HIT_FORCE = 800           # knockback force on a clean glove contact (N) — ~1-punch KO = 1800
 HIT_LIFT = 400.0          # upward component (N)
 HIT_STEPS = 18            # steps the knockback impulse is applied (~0.036 s)
 

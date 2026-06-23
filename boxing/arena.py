@@ -43,9 +43,9 @@ START_X = 0.7
 SHOULDER = (0.0, 0.10, 0.292)      # shoulder pivot in pelvis frame (x, |y|, z)
 ELBOW = (0.0158, 0.1468, 0.1052)   # elbow pivot in pelvis frame (x, |y|, z)
 ARM_KP, ARM_KD = 80.0, 4.0         # position-servo gains for both arm joints
-ARM_RANGE = (-2.4, 0.4)            # rad joint limits; negative = swung forward
-SHOULDER_PUNCH_ANGLE = -1.3        # shoulder target at full extension
-ELBOW_PUNCH_ANGLE = -1.1           # elbow target at full extension (forearm snap)
+ARM_RANGE = (-2.4, 1.3)            # rad joint limits; negative = swung forward
+SHOULDER_PUNCH_ANGLE = -1.5        # shoulder target at full extension
+ELBOW_PUNCH_ANGLE = 1.1           # elbow target at full extension (forearm snap)
 # Geoms (by mesh name) that belong to the forearm; everything else on that side is
 # upper arm. The glove lives on the forearm so the elbow extension carries it forward.
 _FOREARM_MESHES = {"left": {"left_elbow_link", "glove_l"},
