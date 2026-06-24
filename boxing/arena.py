@@ -63,11 +63,11 @@ RING_DIR = Path(__file__).resolve().parent / "assets"
 RING_STL = "ring.stl"                  # mesh file inside RING_DIR (swap freely)
 RING_POS = (0.0, 0.0, 0.0)             # ring origin in the world (x, y, z)
 RING_SCALE = 1.0                       # uniform scale applied to the mesh
-RING_RGBA = (0.16, 0.34, 0.62, 1.0)    # mesh colour (browser tints the whole mesh)
+RING_RGBA = (0.85, 0.80, 0.52, 1.0)    # mesh colour (browser tints the whole mesh)
 RING_MESH_COLLIDE = False              # make the mesh itself a collider (convex hull!)
 
-RING_WALLS = True                      # build the collision boundary (rope walls)
-RING_HALF = 1.15                       # half-width of the square fighting area (m)
+RING_WALLS = True                     # build the collision boundary (rope walls)
+RING_HALF = 2.45                      # half-width of the square fighting area (m)
 WALL_HEIGHT = 0.55                     # rope-wall height (m)
 WALL_THICK = 0.04                      # rope-wall thickness (m)
 
