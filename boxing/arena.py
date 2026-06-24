@@ -15,6 +15,7 @@ separately for punches. Indices are looked up by name, not assumed.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -50,6 +51,63 @@ ELBOW_PUNCH_ANGLE = 1.1           # elbow target at full extension (forearm snap
 # upper arm. The glove lives on the forearm so the elbow extension carries it forward.
 _FOREARM_MESHES = {"left": {"left_elbow_link", "glove_l"},
                    "right": {"right_elbow_link", "glove_r"}}
+
+# --- Ring tunables ---------------------------------------------------------------
+# The ring's *looks* come from a mesh you control: edit boxing/assets/ring.stl,
+# regenerate it (scripts/make_ring_placeholder.py), or drop in your own STL. The mesh
+# is COSMETIC by default — MuJoCo collides meshes by their convex hull, so a hollow
+# ring would turn into a solid block you couldn't stand inside. Containment instead
+# comes from four invisible primitive "rope walls" sized by RING_HALF below. Set
+# RING_MESH_COLLIDE = True only if your STL is convex (e.g. a flat platform).
+RING_DIR = Path(__file__).resolve().parent / "assets"
+RING_STL = "ring.stl"                  # mesh file inside RING_DIR (swap freely)
+RING_POS = (0.0, 0.0, 0.0)             # ring origin in the world (x, y, z)
+RING_SCALE = 1.0                       # uniform scale applied to the mesh
+RING_RGBA = (0.16, 0.34, 0.62, 1.0)    # mesh colour (browser tints the whole mesh)
+RING_MESH_COLLIDE = False              # make the mesh itself a collider (convex hull!)
+
+RING_WALLS = True                      # build the collision boundary (rope walls)
+RING_HALF = 1.15                       # half-width of the square fighting area (m)
+WALL_HEIGHT = 0.55                     # rope-wall height (m)
+WALL_THICK = 0.04                      # rope-wall thickness (m)
+
+
+def _rgba(c) -> str:
+    return " ".join(f"{v:g}" for v in c)
+
+
+def add_ring(spec: mujoco.MjSpec) -> None:
+    """Attach the ring: a cosmetic mesh + (optionally) primitive collision walls.
+
+    Built as its own child spec (like the robots) so the mesh resolves to a bare
+    filename with no global ``meshdir`` — which keeps the exported XML loadable in the
+    browser. The ring body is static (no joint), so it adds nothing to the robots' DOFs.
+    """
+    geoms = [
+        f'<geom type="mesh" mesh="ring" group="2" '
+        f'contype="{int(RING_MESH_COLLIDE)}" conaffinity="{int(RING_MESH_COLLIDE)}" '
+        f'pos="0 0 0" rgba="{_rgba(RING_RGBA)}"/>'
+    ]
+    if RING_WALLS:
+        h, t, zc = RING_HALF, WALL_THICK, WALL_HEIGHT / 2
+        # Four boundary walls (collision only, group 3 = hidden in the browser).
+        for sx, sy, hx, hy in ((0, h, h, t), (0, -h, h, t), (h, 0, t, h), (-h, 0, t, h)):
+            geoms.append(
+                f'<geom type="box" size="{hx:g} {hy:g} {zc:g}" pos="{sx:g} {sy:g} {zc:g}" '
+                f'group="3" contype="1" conaffinity="1" condim="3"/>'
+            )
+    meshdir = str(RING_DIR).replace("\\", "/")
+    xml = (
+        f'<mujoco model="ring">\n'
+        f'  <compiler meshdir="{meshdir}"/>\n'
+        f'  <asset><mesh name="ring" file="{RING_STL}" '
+        f'scale="{RING_SCALE:g} {RING_SCALE:g} {RING_SCALE:g}"/></asset>\n'
+        f'  <worldbody><body name="ring">\n    ' + "\n    ".join(geoms) +
+        f'\n  </body></worldbody>\n</mujoco>'
+    )
+    ring = mujoco.MjSpec.from_string(xml)
+    frame = spec.worldbody.add_frame(pos=list(RING_POS))
+    spec.attach(ring, prefix="ring_", frame=frame)
 
 
 def _add_servo(spec, name):
@@ -193,6 +251,8 @@ def build_arena() -> Arena:
     floor.type = mujoco.mjtGeom.mjGEOM_PLANE
     floor.size = [6, 6, 0.1]
     floor.rgba = [0.27, 0.30, 0.36, 1.0]
+
+    add_ring(spec)
 
     layout = [("r1_", +1.0, -START_X, 0.0), ("r2_", -1.0, +START_X, 180.0)]
     for prefix, _facing, x, yaw in layout:

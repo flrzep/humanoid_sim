@@ -21,7 +21,7 @@ from pathlib import Path
 
 import mujoco
 
-from ..arena import ROBOT_XML
+from ..arena import RING_DIR, ROBOT_XML
 from ..game import GameSim
 
 HERE = Path(__file__).resolve().parent
@@ -119,8 +119,12 @@ def _resolve_meshes(xml: str) -> dict:
     """
     root = ET.fromstring(xml)
     wanted = {el.get("file") for el in root.iter("mesh") if el.get("file")}
-    by_lower = {p.name.lower(): p for p in ROBOT_XML.parent.rglob("*")
-                if p.suffix.lower() in (".stl", ".obj")}
+    # Meshes live under the robot description dir and the boxing ring asset dir.
+    by_lower: dict[str, Path] = {}
+    for base in (ROBOT_XML.parent, RING_DIR):
+        for p in base.rglob("*"):
+            if p.suffix.lower() in (".stl", ".obj"):
+                by_lower.setdefault(p.name.lower(), p)
     out = {}
     for name in wanted:
         p = by_lower.get(name.lower())

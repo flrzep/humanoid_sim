@@ -57,15 +57,42 @@ be nearby. A knockdown (base height below `KO_HEIGHT`) ends the round.
 Tuning: `HIT_FORCE` (impulse on a landed glove; **0 = pure-physics shoving, no KO**),
 `PUNCH_ANGLE` / `ARM_KP` (how far/hard the arm swings), `LUNGE_VX` (how far a punch closes).
 
+## The ring
+
+The ring is split into **looks** and **physics**, because MuJoCo collides meshes by their
+*convex hull* — a hollow ring mesh would become a solid block you couldn't stand inside.
+
+- **Looks:** a cosmetic mesh geom loaded from `boxing/assets/ring.stl`. Drop in your own
+  STL, edit the placeholder, or regenerate it:
+  `python scripts/make_ring_placeholder.py [--half 1.4 --rope-top 0.6]`. The mesh never
+  collides (unless you set `RING_MESH_COLLIDE = True`, only sensible for a convex STL).
+- **Physics:** four invisible primitive **rope walls** (`RING_WALLS`) that actually
+  contain the fighters, sized by `RING_HALF`. They're in render group 3 so the browser
+  hides them; only your STL is visible.
+
+All knobs are the `# --- Ring tunables ---` block in `arena.py`: `RING_STL`, `RING_POS`,
+`RING_SCALE`, `RING_RGBA`, `RING_HALF`, `WALL_HEIGHT`. The ring body is static (no joint),
+so it adds nothing to the fighters' DOFs and leaves the locomotion policy untouched. Keep
+`RING_HALF` matched to your STL's rope footprint so the visible ropes line up with the
+walls.
+
+**What MuJoCo needs for a collision object** (your STL, in data-structure terms): a *mesh
+asset* — a vertex array + triangle-index array parsed from the STL and registered once —
+plus a *geom* that references it by name with a transform (pos/quat/scale) and collision
+attributes (`contype`/`conaffinity` bitmasks, `condim`, friction). `add_ring()` builds
+both as a small child spec so the mesh resolves to a bare filename (browser-loadable).
+
 ## Architecture
 
 ```
 boxing/
   arena.py        two G1 boxers in one model via MjSpec attach (r1_/r2_ prefixes);
-                  per-fighter qpos/qvel/ctrl slices; exports XML for the browser
+                  per-fighter qpos/qvel/ctrl slices; add_ring(); exports XML for browser
+  assets/ring.stl placeholder ring mesh (swap / edit / regenerate)
   fighter.py      locomotion policy on a robot slice (ground truth) + lunge punch
   game.py         GameSim: step both fighters, knockdown detection, round/winner state
   web/server.py   BoxingWorker (real-time stepping) + SSE qpos/state + model serving
   web/boxing.html, boxing_app.js   two-robot render, 2-player keyboard + PS4 gamepad, KO
 scripts/boxing_demo.py             launcher
+scripts/make_ring_placeholder.py   regenerate assets/ring.stl
 ```
